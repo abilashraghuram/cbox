@@ -1,0 +1,20 @@
+[Unit]
+Description=CBox sandbox Guest Initialization Service
+# This service configures the guest's network and thus requires the interface to be UP.
+After=network-online.target
+
+[Service]
+# Using `oneshot` ensures that After= clauses in other services referring to this service mean that
+# the service is finished running.
+Type=oneshot
+ExecStart=/usr/local/bin/cbox-guestinit
+ExecStartPost=hostnamectl hostname cbox-vm
+# Directly using `echo` didn't work.
+ExecStartPost=/bin/sh -c 'echo "127.0.0.1 cbox-vm" >> /etc/hosts'
+ExecStartPost=/bin/sh -c 'echo "127.0.0.1 localhost" >> /etc/hosts'
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

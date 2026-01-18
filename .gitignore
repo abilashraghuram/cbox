@@ -1,0 +1,51 @@
+# Build outputs
+out/
+*.stamp
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VM state
+vm-state/
+
+# Generated API clients (regenerated during build)
+out/gen/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Config overrides (keep example)
+config.local.yaml
+
+# iptables backups
+*.rules

@@ -1,0 +1,131 @@
+name: Build CBox Binaries
+
+on:
+  push:
+    branches: ["main", "ci-cd-test"]
+  pull_request:
+    branches: ["main"]
+
+# Add permissions needed for creating releases.
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.1"
+          check-latest: true
+
+      - name: Install OpenAPI Generator CLI
+        run: |
+          # Install default JDK
+          sudo apt-get update
+          sudo apt-get install -y default-jdk
+
+          # Install OpenAPI Generator using npm
+          npm install @openapitools/openapi-generator-cli -g
+
+          # Verify installation
+          openapi-generator-cli version
+
+      - name: Download required binaries
+        run: |
+          mkdir -p resources/bin
+          # Download busybox for initramfs creation
+          curl -L -o resources/bin/busybox https://raw.githubusercontent.com/abilashraghuram/arrakis-images/main/busybox
+          chmod +x resources/bin/busybox
+
+      - name: Build API clients
+        run: make serverapi chvapi
+
+      - name: Download Go dependencies
+        run: go mod tidy
+
+      - name: Build Go binaries
+        run: make restserver guestinit rootfsmaker cmdserver vsockserver initramfs
+
+      - name: Build rootfs
+        run: sudo make guestrootfs
+
+      - name: Print rootfs image size
+        run: |
+          echo "============================================================"
+          echo "                  ROOTFS IMAGE DETAILS                    "
+          echo "============================================================"
+          ls -lh out/cbox-guestrootfs-ext4.img
+          echo "File type: $(file out/cbox-guestrootfs-ext4.img)"
+          echo "Disk usage: $(du -h out/cbox-guestrootfs-ext4.img)"
+          echo "============================================================"
+
+      - name: Compress rootfs image
+        run: |
+          echo "Compressing rootfs image..."
+          tar -czf out/cbox-guestrootfs-ext4.img.tar.gz -C out cbox-guestrootfs-ext4.img
+          echo "Compressed rootfs image details:"
+          ls -lh out/cbox-guestrootfs-ext4.img.tar.gz
+          echo "Compression ratio: $(($(stat -c %s out/cbox-guestrootfs-ext4.img.tar.gz) * 100 / $(stat -c %s out/cbox-guestrootfs-ext4.img)))%"
+
+      - name: Create release artifacts directory
+        run: mkdir -p release-artifacts
+
+      - name: Copy binaries and config to artifacts directory
+        run: |
+          cp out/cbox-restserver release-artifacts/
+          cp out/cbox-guestinit release-artifacts/
+          cp out/cbox-rootfsmaker release-artifacts/
+          cp out/cbox-cmdserver release-artifacts/
+          cp out/cbox-vsockserver release-artifacts/
+          cp out/initramfs.cpio.gz release-artifacts/
+          cp out/cbox-guestrootfs-ext4.img.tar.gz release-artifacts/
+          cp config.yaml release-artifacts/
+
+      - name: Create VERSION file
+        run: |
+          echo "Creating VERSION file with build metadata..."
+          echo "VERSION=release-${{ github.run_number }}" > release-artifacts/VERSION
+          echo "COMMIT=${{ github.sha }}" >> release-artifacts/VERSION
+          echo "COMMIT_SHORT=$(echo ${{ github.sha }} | cut -c1-8)" >> release-artifacts/VERSION
+          echo "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> release-artifacts/VERSION
+          echo "BRANCH=${{ github.ref_name }}" >> release-artifacts/VERSION
+          echo "BUILD_ID=${{ github.run_id }}" >> release-artifacts/VERSION
+          echo "BUILD_NUMBER=${{ github.run_number }}" >> release-artifacts/VERSION
+          echo "WORKFLOW=${{ github.workflow }}" >> release-artifacts/VERSION
+          echo "ACTOR=${{ github.actor }}" >> release-artifacts/VERSION
+          echo ""
+          echo "VERSION file contents:"
+          cat release-artifacts/VERSION
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cbox-binaries
+          path: release-artifacts/
+          retention-days: 7
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ github.sha }}
+          tag_name: release-${{ github.run_number }}
+          files: |
+            release-artifacts/cbox-restserver
+            release-artifacts/cbox-guestinit
+            release-artifacts/cbox-rootfsmaker
+            release-artifacts/cbox-cmdserver
+            release-artifacts/cbox-vsockserver
+            release-artifacts/initramfs.cpio.gz
+            release-artifacts/cbox-guestrootfs-ext4.img.tar.gz
+            release-artifacts/config.yaml
+            release-artifacts/VERSION
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

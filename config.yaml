@@ -1,0 +1,14 @@
+hostservices:
+  restserver:
+    host: "0.0.0.0"
+    port: "7000"
+    state_dir: "./vm-state"
+    bridge_name: "br0"
+    bridge_ip: "10.20.1.1/24"
+    bridge_subnet: "10.20.1.0/24"
+    chv_bin: "./resources/bin/cloud-hypervisor"
+    kernel: "./resources/bin/vmlinux.bin"
+    rootfs: "./out/cbox-guestrootfs-ext4.img"
+    initramfs: "./out/initramfs.cpio.gz"
+    stateful_size_in_mb: "2048"
+    guest_mem_percentage: "30"

@@ -1,0 +1,287 @@
+openapi: 3.0.0
+info:
+  title: CBox VM Management API
+  description: Lightweight API for managing VMs with exec and callback support.
+  version: 1.0.0
+servers:
+  - url: http://{host}:{port}
+    description: Development server
+    variables:
+      host:
+        default: localhost
+      port:
+        default: "8080"
+paths:
+  /v1/health:
+    get:
+      summary: Health check endpoint
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2023-05-26T07:17:03Z"
+        "503":
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/vms:
+    get:
+      summary: List all VMs
+      responses:
+        "200":
+          description: List of all VMs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAllVMsResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Start a VM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartVMRequest"
+      responses:
+        "200":
+          description: Successfully started VM
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartVMResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Destroy all VMs
+      responses:
+        "200":
+          description: Successfully destroyed all VMs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DestroyAllVMsResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/vms/{name}:
+    get:
+      summary: Get details of a specific VM
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name of the VM
+          schema:
+            type: string
+      responses:
+        "200":
+          description: VM details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListVMResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Destroy a specific VM
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name of the VM to destroy
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successfully destroyed VM
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VMResponse"
+        "404":
+          description: VM not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/vms/{name}/exec:
+    post:
+      summary: Execute command in VM
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Name of the VM
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VmExecRequest"
+      responses:
+        "200":
+          description: Command executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VmExecResponse"
+        "400":
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: VM not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+              description: Error message describing what went wrong
+    StartVMRequest:
+      type: object
+      properties:
+        vmName:
+          type: string
+          description: Name of the VM to start
+        kernel:
+          type: string
+          description: Path of the kernel image to be used
+        initramfs:
+          type: string
+          description: Path of the initramfs image to be used
+        rootfs:
+          type: string
+          description: Path of the rootfs image to be used
+        callbackUrl:
+          type: string
+          description: URL for the VM to send HTTP callbacks to
+    StartVMResponse:
+      type: object
+      properties:
+        vmName:
+          type: string
+        status:
+          type: string
+        ip:
+          type: string
+        tapDeviceName:
+          type: string
+    VMResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+    DestroyAllVMsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+    ListAllVMsResponse:
+      type: object
+      properties:
+        vms:
+          type: array
+          items:
+            type: object
+            properties:
+              vmName:
+                type: string
+              status:
+                type: string
+              ip:
+                type: string
+              tapDeviceName:
+                type: string
+    ListVMResponse:
+      type: object
+      properties:
+        vmName:
+          type: string
+        status:
+          type: string
+        ip:
+          type: string
+        tapDeviceName:
+          type: string
+    VmExecRequest:
+      type: object
+      required:
+        - cmd
+      properties:
+        cmd:
+          type: string
+          description: Command to execute in the VM
+        blocking:
+          type: boolean
+          description: Whether to wait for the command to complete before returning (default true)
+    VmExecResponse:
+      type: object
+      properties:
+        output:
+          type: string
+          description: Command output
+        error:
+          type: string
+          description: Error message if command failed

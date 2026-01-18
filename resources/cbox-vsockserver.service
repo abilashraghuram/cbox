@@ -1,0 +1,14 @@
+[Unit]
+Description=CBox Vsock Server
+# We need to listen on the vsock port.
+After=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/cbox-vsockserver
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
