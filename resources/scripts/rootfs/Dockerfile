@@ -76,6 +76,16 @@ RUN sed -i 's/^#rc_sys=""/rc_sys="lxc"/' /etc/rc.conf && \
     sed -i 's/^#rc_env_allow=".*"/rc_env_allow="*"/' /etc/rc.conf && \
     sed -i 's/^#rc_provide=".*"/rc_provide="loopback net"/' /etc/rc.conf
 
+# Disable TTY gettys - critical for headless VM boot
+# Replace inittab with a minimal version that doesn't spawn TTYs
+RUN echo '# Minimal inittab for headless VM' > /etc/inittab && \
+    echo '::sysinit:/sbin/openrc sysinit' >> /etc/inittab && \
+    echo '::sysinit:/sbin/openrc boot' >> /etc/inittab && \
+    echo '::wait:/sbin/openrc default' >> /etc/inittab && \
+    echo '::ctrlaltdel:/sbin/reboot' >> /etc/inittab && \
+    echo '::shutdown:/sbin/openrc shutdown' >> /etc/inittab && \
+    echo 'ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100' >> /etc/inittab
+
 # Disable TTY and other unnecessary services
 RUN rm -f /etc/init.d/hwdrivers \
     /etc/init.d/machine-id \
@@ -85,6 +95,10 @@ RUN rm -f /etc/init.d/hwdrivers \
 # Create necessary directories for OpenRC
 RUN mkdir -p /run/openrc && \
     touch /run/openrc/softlevel
+
+# Ensure /dev/ttyS0 exists for serial console
+RUN mkdir -p /dev && \
+    mknod -m 666 /dev/ttyS0 c 4 64 2>/dev/null || true
 
 # Add user binaries from the host into the guest rootfs
 ##############
