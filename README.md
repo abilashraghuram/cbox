@@ -4,7 +4,7 @@ CBox is a lightweight MicroVM management system built on Cloud Hypervisor, desig
 
 ## Overview
 
-CBox is a stripped-down version of the Arrakis project, focusing only on:
+CBox is a stripped-down fork of the Arrakis project, focusing only on:
 - **Command Execution**: Execute commands inside isolated VMs
 - **Callback Support**: Allow guest VMs to call back to the host for RPC-style communication
 
@@ -40,6 +40,69 @@ Features intentionally **excluded** to keep things lightweight:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Quick Start (GCP Deployment)
+
+### Step 1: Create a GCE VM with Nested Virtualization
+
+```bash
+VM_NAME=cbox-vm
+PROJECT_ID=<your-project-id>
+SERVICE_ACCOUNT=<your-service-account>
+ZONE=us-west1-b
+
+gcloud compute instances create ${VM_NAME} \
+  --project=${PROJECT_ID} \
+  --zone=${ZONE} \
+  --machine-type=n1-standard-4 \
+  --network-interface=network-tier=STANDARD,stack-type=IPV4_ONLY,subnet=default \
+  --create-disk=auto-delete=yes,boot=yes,device-name=${VM_NAME}-disk,image=projects/ubuntu-os-cloud/global/images/ubuntu-2204-jammy-v20250128,mode=rw,size=50,type=pd-standard \
+  --enable-nested-virtualization
+
+# Create firewall rule for API access
+gcloud compute firewall-rules create allow-cbox-api \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:7000 \
+  --source-ranges=0.0.0.0/0
+```
+
+### Step 2: SSH into the VM and Install CBox
+
+```bash
+gcloud compute ssh ${VM_NAME} --zone=${ZONE}
+
+# Install CBox using the setup script
+cd $HOME
+curl -sSL "https://raw.githubusercontent.com/abilashraghuram/cbox/main/setup/setup.sh" | bash
+```
+
+### Step 3: Run CBox
+
+```bash
+cd $HOME/cbox-prebuilt
+sudo ./cbox-restserver
+```
+
+### Step 4: Test It
+
+```bash
+# Health check
+curl http://localhost:7000/v1/health
+
+# Create a VM
+curl -X POST http://localhost:7000/v1/vms \
+  -H "Content-Type: application/json" \
+  -d '{"vmName": "test-sandbox"}'
+
+# Execute a command
+curl -X POST http://localhost:7000/v1/vms/test-sandbox/exec \
+  -H "Content-Type: application/json" \
+  -d '{"cmd": "echo Hello from CBox!", "blocking": true}'
+
+# Destroy the VM
+curl -X DELETE http://localhost:7000/v1/vms/test-sandbox
+```
+
 ## Components
 
 ### Host-side
@@ -51,73 +114,17 @@ Features intentionally **excluded** to keep things lightweight:
 - **cbox-cmdserver**: HTTP server that accepts and executes commands
 - **cbox-vsockserver**: Handles vsock-based communication for callbacks
 
-## Prerequisites
-
-- Linux host with KVM support
-- Go 1.23+
-- Docker (for building guest images)
-- OpenAPI Generator CLI (for API code generation)
-- Root/sudo access (for networking setup)
-
-Required binaries in `resources/bin/`:
-- `cloud-hypervisor` - Cloud Hypervisor VMM
-- `vmlinux.bin` - Linux kernel image
-- `busybox` - For initramfs
-
-## Building
-
-```bash
-# Build everything
-make all
-
-# Build specific components
-make restserver    # Host REST server
-make guestinit     # Guest init binary
-make cmdserver     # Guest command server
-make vsockserver   # Guest vsock server
-make guestrootfs   # Guest root filesystem (requires sudo)
-```
-
-## Configuration
-
-Edit `config.yaml` to configure the server:
-
-```yaml
-hostservices:
-  restserver:
-    host: "0.0.0.0"
-    port: "7000"
-    state_dir: "./vm-state"
-    bridge_name: "br0"
-    bridge_ip: "10.20.1.1/24"
-    bridge_subnet: "10.20.1.0/24"
-    chv_bin: "./resources/bin/cloud-hypervisor"
-    kernel: "./resources/bin/vmlinux.bin"
-    rootfs: "./out/cbox-guestrootfs-ext4.img"
-    initramfs: "./out/initramfs.cpio.gz"
-    stateful_size_in_mb: "2048"
-    guest_mem_percentage: "30"
-```
-
-## Usage
-
-### Starting the Server
-
-```bash
-sudo ./out/cbox-restserver --config ./config.yaml
-```
-
-### API Endpoints
+## API Reference
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/v1/health` | Health check |
 | POST | `/v1/vms` | Start a new VM |
 | GET | `/v1/vms` | List all VMs |
 | GET | `/v1/vms/{name}` | Get VM details |
 | DELETE | `/v1/vms/{name}` | Destroy a VM |
 | DELETE | `/v1/vms` | Destroy all VMs |
-| POST | `/v1/vms/{name}/exec` | Execute a command in VM |
-| GET | `/v1/health` | Health check |
+| POST | `/v1/vms/{name}/exec` | Execute command in VM |
 
 ### Starting a VM with Callback Support
 
@@ -159,88 +166,148 @@ print(result)
 cbox_callback my_method '{"param1": "value1"}'
 ```
 
-## Development
+## Resource Allocation
 
-### Project Structure
+Each MicroVM receives the following resources:
 
+| Resource | Allocation | Notes |
+|----------|------------|-------|
+| **vCPUs** | host_cpus / 2 | Min 1, Max 8 |
+| **RAM** | 30% of host RAM | Min 1GB, Max 32GB |
+| **Rootfs** | 4 GB (shared) | Read-only |
+| **Stateful Disk** | 2 GB | Per-VM writable overlay |
+| **IP Address** | 1 from 10.20.1.x pool | ~253 VMs max |
+
+## Configuration
+
+Edit `config.yaml` to customize:
+
+```yaml
+hostservices:
+  restserver:
+    host: "0.0.0.0"
+    port: "7000"
+    state_dir: "./vm-state"
+    bridge_name: "br0"
+    bridge_ip: "10.20.1.1/24"
+    bridge_subnet: "10.20.1.0/24"
+    chv_bin: "./resources/bin/cloud-hypervisor"
+    kernel: "./resources/bin/vmlinux.bin"
+    rootfs: "./out/cbox-guestrootfs-ext4.img"
+    initramfs: "./out/initramfs.cpio.gz"
+    stateful_size_in_mb: "2048"
+    guest_mem_percentage: "30"
 ```
-ci-box/
-├── api/                    # OpenAPI specifications
-├── cmd/
-│   ├── cmdserver/          # Guest command server
-│   ├── guestinit/          # Guest initialization
-│   ├── restserver/         # Host REST server
-│   ├── rootfsmaker/        # Rootfs builder
-│   └── vsockserver/        # Guest vsock server
-├── initramfs/              # Initramfs build scripts
-├── pkg/
-│   ├── callback/           # Callback session management
-│   ├── cmdserver/          # Shared types
-│   ├── config/             # Configuration loading
-│   └── server/             # VM server implementation
-│       ├── cidallocator/   # CID allocation
-│       ├── fountain/       # Tap device management
-│       └── ipallocator/    # IP allocation
-├── resources/
-│   ├── bin/                # External binaries (not in git)
-│   └── scripts/
-│       ├── guest/          # Guest callback scripts
-│       └── rootfs/         # Dockerfile for guest image
-├── config.yaml             # Server configuration
-├── go.mod
-├── go.sum
-└── Makefile
-```
 
-### Regenerating API Code
+## Building from Source
+
+### Prerequisites
+
+- Linux host with KVM support
+- Go 1.23+
+- Docker (for building guest images)
+- OpenAPI Generator CLI
+- Root/sudo access
+
+### Build Steps
 
 ```bash
-make serverapi
-make chvapi
+# Install development dependencies
+./setup/install-deps.sh
+
+# Download required binary images (kernel, cloud-hypervisor, busybox)
+./setup/install-images.py
+
+# Build everything
+make all
+```
+
+### Build Specific Components
+
+```bash
+make restserver    # Host REST server
+make guestinit     # Guest init binary
+make cmdserver     # Guest command server
+make vsockserver   # Guest vsock server
+make guestrootfs   # Guest root filesystem (requires sudo)
+```
+
+## Project Structure
+
+```
+cbox/
+├── .github/workflows/     # CI/CD workflows
+├── api/                   # OpenAPI specifications
+├── cmd/
+│   ├── cmdserver/         # Guest command server
+│   ├── guestinit/         # Guest initialization
+│   ├── restserver/        # Host REST server
+│   ├── rootfsmaker/       # Rootfs builder
+│   └── vsockserver/       # Guest vsock server
+├── initramfs/             # Initramfs build scripts
+├── pkg/
+│   ├── callback/          # Callback session management
+│   ├── cmdserver/         # Shared types
+│   ├── config/            # Configuration loading
+│   └── server/            # VM server implementation
+├── resources/
+│   ├── bin/               # External binaries
+│   └── scripts/
+│       ├── guest/         # Guest callback scripts
+│       └── rootfs/        # Dockerfile for guest image
+├── setup/                 # Setup and deployment scripts
+│   ├── setup.sh           # Quick install script
+│   ├── install-deps.sh    # Dev environment setup
+│   ├── install-images.py  # VM binary downloader
+│   └── gcp-instructions.md
+├── config.yaml
+├── go.mod
+└── Makefile
 ```
 
 ## CI/CD
 
-CBox uses GitHub Actions for continuous integration and delivery. The workflow is defined in `.github/workflows/build-binaries.yml`.
+CBox uses GitHub Actions for CI/CD. The workflow:
 
-### What the CI Pipeline Does
+1. Builds all Go binaries
+2. Generates API clients from OpenAPI specs
+3. Builds the guest rootfs image
+4. Creates GitHub releases with all artifacts
 
-1. **Sets up Go 1.23.1** and OpenAPI Generator CLI
-2. **Downloads required binaries** (busybox for initramfs)
-3. **Generates API clients** from OpenAPI specs
-4. **Builds all Go binaries** (restserver, guestinit, cmdserver, vsockserver, rootfsmaker)
-5. **Builds the guest rootfs image** using Docker
-6. **Compresses artifacts** for efficient storage
-7. **Uploads build artifacts** (retained for 7 days)
-8. **Creates a GitHub Release** (on push to main branch)
-
-### Triggering Builds
-
-Builds are automatically triggered on:
+Builds are triggered on:
 - Push to `main` or `ci-cd-test` branches
-- Pull requests targeting `main`
+- Pull requests to `main`
 
-### Release Artifacts
+## Troubleshooting
 
-Each release includes:
-- `cbox-restserver` - Host REST API server
-- `cbox-guestinit` - Guest initialization binary
-- `cbox-cmdserver` - Guest command server
-- `cbox-vsockserver` - Guest vsock server
-- `cbox-rootfsmaker` - Rootfs builder tool
-- `initramfs.cpio.gz` - Initramfs image
-- `cbox-guestrootfs-ext4.img.tar.gz` - Compressed guest rootfs
-- `config.yaml` - Default configuration
-- `VERSION` - Build metadata
-
-### Manual Build
-
-To build locally without CI:
+### Server Won't Start
 
 ```bash
-# Ensure you have the prerequisites
-make all
+# Check if port 7000 is in use
+sudo netstat -tlnp | grep 7000
+
+# Verify KVM is available
+ls -la /dev/kvm
+
+# Check nested virtualization
+cat /sys/module/kvm_intel/parameters/nested
 ```
+
+### VM Creation Fails
+
+```bash
+# Check bridge setup
+ip link show br0
+ip addr show br0
+
+# Enable IP forwarding
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+## Documentation
+
+- [GCP Setup Instructions](setup/gcp-instructions.md)
+- [Setup Changelog](setup/CHANGELOG.md)
 
 ## License
 
