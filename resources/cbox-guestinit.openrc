@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+
+description="CBox Guest Initialization Service"
+
+depend() {
+    need net
+    after network
+}
+
+start() {
+    ebegin "Starting CBox guest initialization"
+
+    # Run the guest init binary
+    /usr/local/bin/cbox-guestinit
+    local ret=$?
+
+    if [ $ret -eq 0 ]; then
+        # Set hostname
+        hostname cbox-vm
+        echo "cbox-vm" > /etc/hostname
+
+        # Configure /etc/hosts
+        echo "127.0.0.1 cbox-vm" >> /etc/hosts
+        echo "127.0.0.1 localhost" >> /etc/hosts
+    fi
+
+    eend $ret
+}
+
+stop() {
+    # Nothing to stop for a oneshot service
+    return 0
+}

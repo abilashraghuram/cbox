@@ -6,6 +6,7 @@ After=network-online.target
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/cbox-vsockserver
+WorkingDirectory=/tmp/vsockserver
 Restart=no
 StandardOutput=journal
 StandardError=journal

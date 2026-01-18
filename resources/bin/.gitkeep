@@ -1,4 +1,0 @@
-# This directory should contain:
-# - busybox (for initramfs)
-# - cloud-hypervisor (VMM binary)
-# - vmlinux.bin (Linux kernel)

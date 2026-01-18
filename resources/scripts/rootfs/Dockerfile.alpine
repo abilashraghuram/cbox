@@ -1,0 +1,176 @@
+# CBox Lightweight Guest Image - Alpine Linux
+#
+# This is a minimal Alpine-based alternative to the Ubuntu image.
+# Resulting rootfs is significantly smaller (~100-200MB vs ~2GB).
+#
+# Key differences from Ubuntu image:
+# - Uses OpenRC instead of systemd
+# - Uses musl libc (Go binaries compiled with CGO_ENABLED=0 work fine)
+# - Much smaller footprint
+#
+# Trade-offs:
+# - Some packages may not be available or have different names
+# - musl libc may cause compatibility issues with some binaries
+# - Less debugging tools by default
+
+FROM alpine:3.19
+
+# Install essential packages
+RUN apk add --no-cache \
+    openrc \
+    bash \
+    curl \
+    wget \
+    iproute2 \
+    iputils \
+    net-tools \
+    bind-tools \
+    ca-certificates \
+    tzdata \
+    python3 \
+    py3-pip \
+    socat \
+    sudo \
+    shadow \
+    && rm -rf /var/cache/apk/*
+
+# Create cbox user
+ARG USERNAME=cbox
+ARG PASSWORD=cbox0000
+RUN adduser -D -s /bin/bash $USERNAME && \
+    echo "$USERNAME:$PASSWORD" | chpasswd && \
+    adduser $USERNAME wheel
+
+# Allow wheel group to sudo
+RUN echo '%wheel ALL=(ALL) ALL' >> /etc/sudoers
+
+# Set timezone
+ENV TZ=Etc/UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Create required directories
+RUN mkdir -p /mnt/stateful && chmod 0777 /mnt/stateful
+RUN mkdir -p /tmp/vsockserver && chmod 0755 /tmp/vsockserver
+RUN mkdir -p /tmp/server_files && chmod 0755 /tmp/server_files
+
+# Configure OpenRC for container/VM use
+RUN sed -i 's/^#rc_sys=""/rc_sys="lxc"/' /etc/rc.conf && \
+    sed -i 's/^#rc_env_allow=""/rc_env_allow="*"/' /etc/rc.conf && \
+    sed -i 's/^#rc_provide=""/rc_provide="loopback net"/' /etc/rc.conf
+
+# Disable ttys (not needed in VM without console)
+RUN sed -i 's/^tty/#tty/' /etc/inittab 2>/dev/null || true
+
+# Add cbox binaries from build output
+ARG OUT_DIR=out
+ARG RESOURCES_DIR=resources
+
+# Copy guestinit
+ARG GUESTINIT_BIN=cbox-guestinit
+COPY ${OUT_DIR}/${GUESTINIT_BIN} /usr/local/bin/${GUESTINIT_BIN}
+RUN chmod +x /usr/local/bin/${GUESTINIT_BIN}
+
+# Copy cmdserver
+ARG CMDSERVER_BIN=cbox-cmdserver
+COPY ${OUT_DIR}/${CMDSERVER_BIN} /usr/local/bin/${CMDSERVER_BIN}
+RUN chmod +x /usr/local/bin/${CMDSERVER_BIN}
+
+# Copy vsockserver
+ARG VSOCKSERVER_BIN=cbox-vsockserver
+COPY ${OUT_DIR}/${VSOCKSERVER_BIN} /usr/local/bin/${VSOCKSERVER_BIN}
+RUN chmod +x /usr/local/bin/${VSOCKSERVER_BIN}
+
+# Create OpenRC init script for guestinit (runs once at boot)
+RUN cat > /etc/init.d/cbox-guestinit << 'EOF'
+#!/sbin/openrc-run
+
+description="CBox Guest Initialization"
+command="/usr/local/bin/cbox-guestinit"
+command_background="no"
+
+depend() {
+    need net
+    before cbox-cmdserver cbox-vsockserver
+}
+
+start() {
+    ebegin "Initializing CBox guest networking"
+    ${command}
+    # Set hostname
+    hostname cbox-vm
+    echo "127.0.0.1 cbox-vm" >> /etc/hosts
+    echo "127.0.0.1 localhost" >> /etc/hosts
+    eend $?
+}
+EOF
+RUN chmod +x /etc/init.d/cbox-guestinit
+
+# Create OpenRC init script for cmdserver
+RUN cat > /etc/init.d/cbox-cmdserver << 'EOF'
+#!/sbin/openrc-run
+
+description="CBox Command Server"
+command="/usr/local/bin/cbox-cmdserver"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/cbox-cmdserver.log"
+error_log="/var/log/cbox-cmdserver.log"
+
+depend() {
+    need cbox-guestinit
+    after net
+}
+
+start_pre() {
+    checkpath --file --mode 0644 ${output_log}
+}
+EOF
+RUN chmod +x /etc/init.d/cbox-cmdserver
+
+# Create OpenRC init script for vsockserver
+RUN cat > /etc/init.d/cbox-vsockserver << 'EOF'
+#!/sbin/openrc-run
+
+description="CBox Vsock Server"
+command="/usr/local/bin/cbox-vsockserver"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/cbox-vsockserver.log"
+error_log="/var/log/cbox-vsockserver.log"
+
+depend() {
+    need net
+    after cbox-guestinit
+}
+
+start_pre() {
+    checkpath --file --mode 0644 ${output_log}
+}
+EOF
+RUN chmod +x /etc/init.d/cbox-vsockserver
+
+# Enable services at boot
+RUN rc-update add cbox-guestinit default
+RUN rc-update add cbox-cmdserver default
+RUN rc-update add cbox-vsockserver default
+
+# Install cbox callback library for Python
+COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.py /usr/lib/python3.11/site-packages/cbox_callback.py
+COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.sh /usr/local/bin/cbox_callback
+RUN chmod +x /usr/local/bin/cbox_callback
+
+# Create a simple init wrapper that starts OpenRC
+RUN cat > /sbin/cbox-init << 'EOF'
+#!/bin/sh
+# Initialize system
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+# Start OpenRC
+exec /sbin/openrc-init
+EOF
+RUN chmod +x /sbin/cbox-init
+
+# Default command
+CMD ["/sbin/init"]

@@ -1,0 +1,82 @@
+# CBox Guest Image - Debian Slim
+#
+# This is a lightweight Debian-based alternative to the Ubuntu image.
+# Uses systemd like Ubuntu but with a much smaller footprint.
+# Resulting rootfs is ~500MB-800MB vs ~2GB for Ubuntu.
+#
+# Key benefits:
+# - Systemd support (same service files as Ubuntu)
+# - glibc (full compatibility with standard binaries)
+# - Smaller than Ubuntu but larger than Alpine
+# - APT package manager with good package availability
+
+FROM debian:bookworm-slim
+
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install systemd and essential packages
+# Using --no-install-recommends to minimize size
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    systemd \
+    systemd-sysv \
+    dbus \
+    bash \
+    curl \
+    ca-certificates \
+    iproute2 \
+    iputils-ping \
+    net-tools \
+    dnsutils \
+    python3 \
+    python3-pip \
+    socat \
+    sudo \
+    procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt/archives/*
+
+# Remove unnecessary systemd services to speed up boot
+RUN rm -f /lib/systemd/system/multi-user.target.wants/* \
+    /etc/systemd/system/*.wants/* \
+    /lib/systemd/system/local-fs.target.wants/* \
+    /lib/systemd/system/sockets.target.wants/*udev* \
+    /lib/systemd/system/sockets.target.wants/*initctl* \
+    /lib/systemd/system/sysinit.target.wants/systemd-tmpfiles-setup* \
+    /lib/systemd/system/systemd-update-utmp* \
+    2>/dev/null || true
+
+# Create cbox user
+ARG USERNAME=cbox
+ARG PASSWORD=cbox0000
+RUN useradd -m -s /bin/bash $USERNAME && \
+    echo "$USERNAME:$PASSWORD" | chpasswd && \
+    usermod -aG sudo $USERNAME
+
+# Set timezone
+ENV TZ=Etc/UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Create required directories
+RUN mkdir -p /mnt/stateful && chmod 0777 /mnt/stateful
+RUN mkdir -p /tmp/vsockserver && chmod 0755 /tmp/vsockserver
+RUN mkdir -p /tmp/server_files && chmod 0755 /tmp/server_files
+
+# Configure sudo without password for cbox user (optional, for convenience)
+RUN echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/cbox
+
+# Set default target to multi-user (no graphical)
+RUN ln -sf /lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+
+# Add cbox binaries from build output
+ARG OUT_DIR=out
+ARG RESOURCES_DIR=resources
+
+# Copy and install guestinit
+ARG GUESTINIT_BIN=cbox-guestinit
+COPY ${OUT_DIR}/${GUESTINIT_BIN} /usr/local/bin/${GUESTINIT_BIN}
+RUN chmod +x /usr/local/bin/${GUESTINIT_BIN}
+COPY ${RESOURCES_DIR}/${GUESTINIT_BIN}.service /lib/systemd/system/${GUESTINIT_BIN}.service
+RUN ln -sf /lib/systemd/system/${GUESTINIT_BIN}.service /etc/systemd/system/multi-user.target.wants/${GUESTINIT_

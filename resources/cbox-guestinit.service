@@ -1,5 +1,5 @@
 [Unit]
-Description=CBox sandbox Guest Initialization Service
+Description=CBox Guest Initialization Service
 # This service configures the guest's network and thus requires the interface to be UP.
 After=network-online.target
 
@@ -8,8 +8,7 @@ After=network-online.target
 # the service is finished running.
 Type=oneshot
 ExecStart=/usr/local/bin/cbox-guestinit
-ExecStartPost=hostnamectl hostname cbox-vm
-# Directly using `echo` didn't work.
+ExecStartPost=/bin/sh -c 'hostname cbox-vm'
 ExecStartPost=/bin/sh -c 'echo "127.0.0.1 cbox-vm" >> /etc/hosts'
 ExecStartPost=/bin/sh -c 'echo "127.0.0.1 localhost" >> /etc/hosts'
 Restart=no

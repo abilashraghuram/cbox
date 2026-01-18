@@ -1,0 +1,107 @@
+FROM ubuntu:22.04
+
+# Avoid prompts from apt.
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG USERNAME=cbox
+ARG PASSWORD=cbox0000
+RUN useradd -m $USERNAME && \
+    echo "$USERNAME:$PASSWORD" | chpasswd && \
+    adduser $USERNAME sudo
+
+# Needed to see journal logs.
+RUN usermod -aG adm cbox
+
+# Set timezone.
+ENV TZ=Etc/UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Update and install common utilities.
+RUN apt-get update && \
+    apt-get install -y \
+    init \
+    systemd \
+    ncat \
+    bash \
+    curl \
+    wget \
+    vim \
+    nano \
+    git \
+    htop \
+    net-tools \
+    iputils-ping \
+    iproute2 \
+    traceroute \
+    dnsutils \
+    tcpdump \
+    netcat-openbsd \
+    ssh \
+    sudo \
+    man-db \
+    less \
+    procps \
+    psmisc \
+    lsof \
+    rsync \
+    tar \
+    gzip \
+    zip \
+    unzip \
+    ca-certificates \
+    tzdata \
+    tini \
+    python3 \
+    python3-venv \
+    python3-pip \
+    socat \
+    strace \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# To support sudo within the guest.
+RUN chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo
+
+# Create required directories
+RUN mkdir -p /mnt/stateful && chmod 0777 /mnt/stateful
+
+# Set up directory for the vsock server.
+RUN mkdir -p /tmp/vsockserver && chmod 0755 /tmp/vsockserver
+
+# Set up directory for cmdserver working directory
+RUN mkdir -p /tmp/server_files && chmod 0755 /tmp/server_files
+
+# Add user binaries from the host into the guest rootfs
+##############
+RUN ln -s /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+
+ARG OUT_DIR=out
+ARG RESOURCES_DIR=resources
+
+ARG GUESTINIT_BIN=cbox-guestinit
+COPY ${OUT_DIR}/${GUESTINIT_BIN} /usr/local/bin/${GUESTINIT_BIN}
+RUN chmod +x /usr/local/bin/${GUESTINIT_BIN}
+COPY ${RESOURCES_DIR}/${GUESTINIT_BIN}.service /usr/lib/systemd/system/${GUESTINIT_BIN}.service
+RUN ln -s /usr/lib/systemd/system/${GUESTINIT_BIN}.service /etc/systemd/system/multi-user.target.wants/${GUESTINIT_BIN}.service
+
+ARG CMDSERVER_BIN=cbox-cmdserver
+COPY ${OUT_DIR}/${CMDSERVER_BIN} /usr/local/bin/${CMDSERVER_BIN}
+RUN chmod +x /usr/local/bin/${CMDSERVER_BIN}
+COPY ${RESOURCES_DIR}/${CMDSERVER_BIN}.service /usr/lib/systemd/system/${CMDSERVER_BIN}.service
+RUN ln -s /usr/lib/systemd/system/${CMDSERVER_BIN}.service /etc/systemd/system/multi-user.target.wants/${CMDSERVER_BIN}.service
+
+ARG VSOCKSERVER_BIN=cbox-vsockserver
+COPY ${OUT_DIR}/${VSOCKSERVER_BIN} /usr/local/bin/${VSOCKSERVER_BIN}
+RUN chmod +x /usr/local/bin/${VSOCKSERVER_BIN}
+COPY ${RESOURCES_DIR}/${VSOCKSERVER_BIN}.service /usr/lib/systemd/system/${VSOCKSERVER_BIN}.service
+RUN ln -s /usr/lib/systemd/system/${VSOCKSERVER_BIN}.service /etc/systemd/system/multi-user.target.wants/${VSOCKSERVER_BIN}.service
+
+# Install cbox callback library for guest code to call back to the host
+COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.py /usr/local/lib/python3/dist-packages/cbox_callback.py
+COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.sh /usr/local/bin/cbox_callback
+RUN chmod +x /usr/local/bin/cbox_callback
+
+# Prevent the renaming service that will change "eth0" to "ens*".
+# If not done our init service inside the guest has race conditions while configuring the network.
+RUN ln -s /dev/null /etc/systemd/network/99-default.link
+##############

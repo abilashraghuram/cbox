@@ -1,27 +1,24 @@
-FROM ubuntu:22.04
-
-# Avoid prompts from apt.
-ENV DEBIAN_FRONTEND=noninteractive
+FROM alpine:3.18
 
 ARG USERNAME=cbox
 ARG PASSWORD=cbox0000
-RUN useradd -m $USERNAME && \
-    echo "$USERNAME:$PASSWORD" | chpasswd && \
-    adduser $USERNAME sudo
 
-# Needed to see journal logs.
-RUN usermod -aG adm cbox
+# Create user with home directory and add to wheel group for sudo
+RUN adduser -D -s /bin/bash ${USERNAME} && \
+    echo "${USERNAME}:${PASSWORD}" | chpasswd && \
+    addgroup ${USERNAME} wheel
 
-# Set timezone.
+# Set timezone
 ENV TZ=Etc/UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Update and install common utilities.
-RUN apt-get update && \
-    apt-get install -y \
-    init \
-    systemd \
-    ncat \
+# Update and install common utilities
+# Note: Package name mappings from Ubuntu to Alpine
+RUN apk update && \
+    apk add --no-cache \
+    openrc \
+    busybox-openrc \
+    nmap-ncat \
     bash \
     curl \
     wget \
@@ -30,13 +27,13 @@ RUN apt-get update && \
     git \
     htop \
     net-tools \
-    iputils-ping \
+    iputils \
     iproute2 \
-    traceroute \
-    dnsutils \
+    mtr \
+    bind-tools \
     tcpdump \
     netcat-openbsd \
-    ssh \
+    openssh \
     sudo \
     man-db \
     less \
@@ -52,54 +49,79 @@ RUN apt-get update && \
     tzdata \
     tini \
     python3 \
-    python3-venv \
-    python3-pip \
+    py3-pip \
+    py3-virtualenv \
     socat \
     strace \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    shadow \
+    musl-utils
 
-# To support sudo within the guest.
+# Enable wheel group for sudo without password (optional: remove NOPASSWD for security)
+RUN echo '%wheel ALL=(ALL) ALL' >> /etc/sudoers
+
+# To support sudo within the guest
 RUN chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo
 
-# TODO: Tighten permissions on this directory after testing.
+# Create required directories
 RUN mkdir -p /mnt/stateful && chmod 0777 /mnt/stateful
 
-# Set up directory for the vsock server. This is required in case the overlayfs setup fails, we
-# still need the vsockserver to be able to run.
-RUN mkdir -p /tmp/vsockserver && chmod 0644 /tmp/vsockserver
+# Set up directory for the vsock server
+RUN mkdir -p /tmp/vsockserver && chmod 0755 /tmp/vsockserver
 
-# Add user binaries from the host into the guest rootfs in this section.
+# Set up directory for cmdserver working directory
+RUN mkdir -p /tmp/server_files && chmod 0755 /tmp/server_files
+
+# Configure OpenRC for container/VM environment
+RUN sed -i 's/^#rc_sys=""/rc_sys="lxc"/' /etc/rc.conf && \
+    sed -i 's/^#rc_env_allow=".*"/rc_env_allow="*"/' /etc/rc.conf && \
+    sed -i 's/^#rc_provide=".*"/rc_provide="loopback net"/' /etc/rc.conf
+
+# Disable TTY and other unnecessary services
+RUN rm -f /etc/init.d/hwdrivers \
+    /etc/init.d/machine-id \
+    /etc/init.d/modules \
+    /etc/init.d/modloop
+
+# Create necessary directories for OpenRC
+RUN mkdir -p /run/openrc && \
+    touch /run/openrc/softlevel
+
+# Add user binaries from the host into the guest rootfs
 ##############
-RUN ln -s /usr/lib/systemd/system/multi-user.target /etc/systemd/system/default.target
-
 ARG OUT_DIR=out
 ARG RESOURCES_DIR=resources
 
+# Install guestinit service
 ARG GUESTINIT_BIN=cbox-guestinit
 COPY ${OUT_DIR}/${GUESTINIT_BIN} /usr/local/bin/${GUESTINIT_BIN}
 RUN chmod +x /usr/local/bin/${GUESTINIT_BIN}
-COPY ${RESOURCES_DIR}/${GUESTINIT_BIN}.service /usr/lib/systemd/system/${GUESTINIT_BIN}.service
-RUN ln -s /usr/lib/systemd/system/${GUESTINIT_BIN}.service /etc/systemd/system/multi-user.target.wants/${GUESTINIT_BIN}.service
+COPY ${RESOURCES_DIR}/${GUESTINIT_BIN}.openrc /etc/init.d/${GUESTINIT_BIN}
+RUN chmod +x /etc/init.d/${GUESTINIT_BIN} && \
+    rc-update add ${GUESTINIT_BIN} default
 
+# Install cmdserver service
 ARG CMDSERVER_BIN=cbox-cmdserver
 COPY ${OUT_DIR}/${CMDSERVER_BIN} /usr/local/bin/${CMDSERVER_BIN}
 RUN chmod +x /usr/local/bin/${CMDSERVER_BIN}
-COPY ${RESOURCES_DIR}/${CMDSERVER_BIN}.service /usr/lib/systemd/system/${CMDSERVER_BIN}.service
-RUN ln -s /usr/lib/systemd/system/${CMDSERVER_BIN}.service /etc/systemd/system/multi-user.target.wants/${CMDSERVER_BIN}.service
+COPY ${RESOURCES_DIR}/${CMDSERVER_BIN}.openrc /etc/init.d/${CMDSERVER_BIN}
+RUN chmod +x /etc/init.d/${CMDSERVER_BIN} && \
+    rc-update add ${CMDSERVER_BIN} default
 
+# Install vsockserver service
 ARG VSOCKSERVER_BIN=cbox-vsockserver
 COPY ${OUT_DIR}/${VSOCKSERVER_BIN} /usr/local/bin/${VSOCKSERVER_BIN}
 RUN chmod +x /usr/local/bin/${VSOCKSERVER_BIN}
-COPY ${RESOURCES_DIR}/${VSOCKSERVER_BIN}.service /usr/lib/systemd/system/${VSOCKSERVER_BIN}.service
-RUN ln -s /usr/lib/systemd/system/${VSOCKSERVER_BIN}.service /etc/systemd/system/multi-user.target.wants/${VSOCKSERVER_BIN}.service
+COPY ${RESOURCES_DIR}/${VSOCKSERVER_BIN}.openrc /etc/init.d/${VSOCKSERVER_BIN}
+RUN chmod +x /etc/init.d/${VSOCKSERVER_BIN} && \
+    rc-update add ${VSOCKSERVER_BIN} default
 
 # Install cbox callback library for guest code to call back to the host
-COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.py /usr/local/lib/python3/dist-packages/cbox_callback.py
+# Create the Python site-packages directory for Alpine
+RUN mkdir -p /usr/lib/python3.11/site-packages
+COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.py /usr/lib/python3.11/site-packages/cbox_callback.py
 COPY ${RESOURCES_DIR}/scripts/guest/cbox_callback.sh /usr/local/bin/cbox_callback
 RUN chmod +x /usr/local/bin/cbox_callback
 
-# Prevent the renaming service that will change "eth0" to "ens*". If not done our init service
-# inside the guest has race conditions while configuring the network.
-RUN ln -s /dev/null /etc/systemd/network/99-default.link
+# Alpine uses predictable network interface names by default (eth0)
+# No need to disable renaming service like in Ubuntu/systemd
 ##############

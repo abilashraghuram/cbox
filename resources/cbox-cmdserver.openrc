@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+
+description="CBox Command Server"
+
+command="/usr/local/bin/cbox-cmdserver"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need cbox-guestinit
+    after cbox-guestinit
+}
+
+start_pre() {
+    # Ensure the working directory exists
+    checkpath --directory --mode 0755 /tmp/server_files
+}
+
+start() {
+    ebegin "Starting CBox command server"
+    start-stop-daemon --start \
+        --background \
+        --make-pidfile \
+        --pidfile "${pidfile}" \
+        --exec "${command}"
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping CBox command server"
+    start-stop-daemon --stop --pidfile "${pidfile}"
+    eend $?
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}

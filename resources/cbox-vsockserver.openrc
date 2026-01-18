@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+
+description="CBox Vsock Server"
+
+command="/usr/local/bin/cbox-vsockserver"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need net
+    after network
+}
+
+start_pre() {
+    # Ensure the vsock server directory exists
+    checkpath --directory --mode 0755 /tmp/vsockserver
+}
+
+start() {
+    ebegin "Starting CBox vsock server"
+    start-stop-daemon --start \
+        --background \
+        --make-pidfile \
+        --pidfile "${pidfile}" \
+        --exec "${command}"
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping CBox vsock server"
+    start-stop-daemon --stop --pidfile "${pidfile}"
+    eend $?
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
