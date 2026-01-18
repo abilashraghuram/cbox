@@ -1,12 +1,4 @@
 #!/usr/bin/env python3
-"""
-CBox Install Images Script
-
-Downloads the required binary images for running CBox MicroVMs:
-- vmlinux.bin: Linux kernel image
-- cloud-hypervisor: Cloud Hypervisor VMM binary
-- busybox: BusyBox for initramfs
-"""
 
 import os
 import requests
@@ -42,8 +34,7 @@ def main():
     bin_dir = "resources/bin"
     ensure_directory_exists(bin_dir)
 
-    # Files to download
-    # Using the same sources as arrakis since these are standard components
+    # Download files
     files_to_download = [
         {
             "url": "https://github.com/abshkbh/arrakis-images/blob/main/guest/kernel/vmlinux.bin",
@@ -62,36 +53,19 @@ def main():
         }
     ]
 
-    print("=" * 60)
-    print("CBox Image Installer")
-    print("=" * 60)
-    print(f"Installing to: {os.path.abspath(bin_dir)}")
-    print()
-
     for file_info in files_to_download:
         try:
-            print(f"[*] Downloading {file_info['description']}...")
             download_file(
                 file_info["url"],
                 file_info["destination"],
                 file_info["executable"]
             )
-            size_mb = os.path.getsize(file_info["destination"]) / (1024 * 1024)
-            print(f"    ✓ Downloaded {file_info['destination']} ({size_mb:.2f} MB)")
+            print(f"Successfully downloaded {file_info['destination']}")
         except Exception as e:
-            print(f"    ✗ Error downloading {file_info['url']}: {str(e)}")
+            print(f"Error downloading {file_info['url']}: {str(e)}")
             exit(1)
 
-    print()
-    print("=" * 60)
     print("All files downloaded successfully!")
-    print("=" * 60)
-    print()
-    print("Directory contents:")
-    for f in os.listdir(bin_dir):
-        filepath = os.path.join(bin_dir, f)
-        size_mb = os.path.getsize(filepath) / (1024 * 1024)
-        print(f"  - {f} ({size_mb:.2f} MB)")
 
 if __name__ == "__main__":
     main()
