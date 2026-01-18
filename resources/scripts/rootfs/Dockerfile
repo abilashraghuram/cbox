@@ -62,6 +62,12 @@ RUN echo '%wheel ALL=(ALL) ALL' >> /etc/sudoers
 # To support sudo within the guest
 RUN chown root:root /usr/bin/sudo && chmod 4755 /usr/bin/sudo
 
+# Create symlinks for commands that are in different locations on Alpine vs Ubuntu
+# The guestinit binary expects these at /usr/bin but Alpine puts them in /sbin
+RUN ln -sf /sbin/ip /usr/bin/ip && \
+    ln -sf /sbin/route /usr/bin/route && \
+    ln -sf /bin/hostname /usr/bin/hostname
+
 # Create required directories
 RUN mkdir -p /mnt/stateful && chmod 0777 /mnt/stateful
 
