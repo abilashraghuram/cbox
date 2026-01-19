@@ -1,5 +1,3 @@
-# CBox - Lightweight MicroVM Execution Environment
-
 ## Architecture
 
 ```
